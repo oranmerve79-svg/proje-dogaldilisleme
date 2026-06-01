@@ -307,7 +307,7 @@ def render_input_section() -> tuple[str, str, str]:
     st.markdown("## Video Analizi")
     source_mode = st.radio(
         "Transcript Kaynağı",
-        options=["YouTube'dan Otomatik Al", "TXT Dosyası Yükle", "Hazır Örnek Kullan"],
+        options=["YouTube'dan Otomatik Al"],
         horizontal=True,
     )
 
