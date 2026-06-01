@@ -21,8 +21,7 @@ uzerinde deploy ettikten sonra guncelleyin:
 | Baglanti | Adres |
 | --- | --- |
 | Canli uygulama | `https://proje-dogaldilisleme-9vmezzcl4ryrqtc76krjx7.streamlit.app/` |
-| GitHub reposu | `BURAYA_PUBLIC_GITHUB_REPO_BAGLANTISI` |
-| Proje tanitim videosu | `BURAYA_HERKESE_ACIK_VIDEO_BAGLANTISI` |
+| Proje tanitim videosu | `https://drive.google.com/file/d/1l1p9DkiURk-Kj4oHPqQZmq89lMIdBXhG/view?usp=sharing` |
 
 > Not: Paylasilan baglantilarin herkese acik oldugunu gizli sekmede kontrol edin.
 
