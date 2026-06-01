@@ -1,0 +1,9 @@
+streamlit>=1.33.0
+pandas>=2.2.2
+youtube-transcript-api>=0.6.2
+deep-translator>=1.11.4
+yake>=0.4.8
+yt-dlp>=2025.1.26
+faster-whisper>=1.1.1
+google-genai>=1.30.0
+reportlab>=4.2.2
