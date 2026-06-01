@@ -20,7 +20,7 @@ uzerinde deploy ettikten sonra guncelleyin:
 
 | Baglanti | Adres |
 | --- | --- |
-| Canli uygulama | `BURAYA_STREAMLIT_CLOUD_BAGLANTISI` |
+| Canli uygulama | `https://proje-dogaldilisleme-9vmezzcl4ryrqtc76krjx7.streamlit.app/` |
 | GitHub reposu | `BURAYA_PUBLIC_GITHUB_REPO_BAGLANTISI` |
 | Proje tanitim videosu | `BURAYA_HERKESE_ACIK_VIDEO_BAGLANTISI` |
 
