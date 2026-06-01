@@ -134,7 +134,7 @@ def render_sidebar() -> tuple[str, str, float, str]:
     }
 
     st.sidebar.markdown("**Transcript Kaynağı**")
-    st.sidebar.info("YouTube API, TXT dosyası veya hazır örnek")
+    st.sidebar.info("YouTube API")
     st.sidebar.caption("YouTube erişimi engellenirse TXT dosyası yükleyerek analize devam edebilirsin.")
     st.sidebar.caption(f"Kullanılan özetleme yaklaşımı: `{DEFAULT_SUMMARIZER_MODEL}`")
     return (
@@ -306,7 +306,7 @@ def render_input_section() -> tuple[str, str, str]:
     """Transcript kaynağını ve ilgili kullanıcı girdisini oluşturur."""
     st.markdown("## Video Analizi")
     source_mode = st.radio(
-        "Transcript Kaynağı",
+        "",
         options=["YouTube'dan Otomatik Al"],
         horizontal=True,
     )
