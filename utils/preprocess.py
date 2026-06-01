@@ -65,6 +65,31 @@ def split_sentences(text: str) -> List[str]:
     return [sentence.strip() for sentence in SENTENCE_SPLIT_RE.split(cleaned) if sentence.strip()]
 
 
+def text_to_segments(text: str, words_per_segment: int = 45) -> List[Dict]:
+    """Düz metni konu bloklarında kullanılabilecek yapay segmentlere böler."""
+    sentences = split_sentences(text)
+    if len(sentences) <= 1:
+        words = clean_text(text).split()
+        sentences = [
+            " ".join(words[index : index + words_per_segment])
+            for index in range(0, len(words), words_per_segment)
+        ]
+
+    segments: List[Dict] = []
+    segment_words: List[str] = []
+    for sentence in sentences:
+        segment_words.extend(sentence.split())
+        if len(segment_words) < words_per_segment:
+            continue
+        segment_text = " ".join(segment_words)
+        segments.append({"start": 0.0, "end": 0.0, "text": segment_text})
+        segment_words = []
+
+    if segment_words:
+        segments.append({"start": 0.0, "end": 0.0, "text": " ".join(segment_words)})
+    return segments
+
+
 def build_topic_blocks(segments: Sequence[Dict], target_block_count: int = 5) -> List[Dict]:
     """Segmentleri video boyunca dağılmış bloklara ayırır."""
     normalized_segments = normalize_segments(segments)

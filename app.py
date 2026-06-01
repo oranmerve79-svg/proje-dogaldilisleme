@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import os
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -14,7 +16,7 @@ from utils.audience import (
     parse_audience_table,
 )
 from utils.keywords import extract_keywords
-from utils.preprocess import clean_text, preview_text
+from utils.preprocess import clean_text, preview_text, text_to_segments
 from utils.report import build_pdf_report
 from utils.sentiment import (
     SentimentAnalysisError,
@@ -132,8 +134,8 @@ def render_sidebar() -> tuple[str, str, float, str]:
     }
 
     st.sidebar.markdown("**Transcript Kaynağı**")
-    st.sidebar.info("Hızlı (YouTube API)")
-    st.sidebar.caption("Bu sürümde transcript kaynağı sabit olarak YouTube API kullanır.")
+    st.sidebar.info("YouTube API, TXT dosyası veya hazır örnek")
+    st.sidebar.caption("YouTube erişimi engellenirse TXT dosyası yükleyerek analize devam edebilirsin.")
     st.sidebar.caption(f"Kullanılan özetleme yaklaşımı: `{DEFAULT_SUMMARIZER_MODEL}`")
     return (
         language_label,
@@ -297,13 +299,37 @@ def render_saved_analysis(payload: dict) -> None:
     render_download_buttons(payload, button_key=f"saved_pdf_{payload.get('id', 'unknown')}")
 
 
-def render_input_section() -> str:
-    """Video linki giriş alanını oluşturur."""
+EXAMPLE_TRANSCRIPT_PATH = Path(__file__).resolve().parent / "examples" / "ornek_transcript.txt"
+
+
+def render_input_section() -> tuple[str, str, str]:
+    """Transcript kaynağını ve ilgili kullanıcı girdisini oluşturur."""
     st.markdown("## Video Analizi")
-    return st.text_input(
+    source_mode = st.radio(
+        "Transcript Kaynağı",
+        options=["YouTube'dan Otomatik Al", "TXT Dosyası Yükle", "Hazır Örnek Kullan"],
+        horizontal=True,
+    )
+
+    if source_mode == "TXT Dosyası Yükle":
+        uploaded_file = st.file_uploader("Transcript Dosyası", type=["txt"])
+        if not uploaded_file:
+            return "", "txt", ""
+        transcript_text = uploaded_file.getvalue().decode("utf-8-sig", errors="replace")
+        content_hash = hashlib.sha256(transcript_text.encode("utf-8")).hexdigest()[:12]
+        return f"TXT Dosyası: {uploaded_file.name} ({content_hash})", "txt", transcript_text
+
+    if source_mode == "Hazır Örnek Kullan":
+        transcript_text = EXAMPLE_TRANSCRIPT_PATH.read_text(encoding="utf-8")
+        st.caption("Hazır örnek transcript seçildi. Analizi başlatmak için düğmeye bas.")
+        return "Hazır Örnek Transcript", "example", transcript_text
+
+    video_url = st.text_input(
         "YouTube Video Linki",
         placeholder="https://www.youtube.com/watch?v=...",
     ).strip()
+    st.caption("YouTube erişimi engellenirse TXT dosyası yükleme seçeneğini kullanabilirsin.")
+    return video_url, "youtube", ""
 
 
 def render_result_card(title: str, content: str) -> None:
@@ -399,16 +425,18 @@ def main() -> None:
     _language_label, target_language, summary_ratio, transcript_mode = render_sidebar()
     render_auth_section()
     render_history_section()
-    video_url = render_input_section()
+    video_url, transcript_input_mode, provided_transcript_text = render_input_section()
 
     if st.button("Analizi Başlat", use_container_width=True):
         try:
             if not video_url:
+                if transcript_input_mode == "txt":
+                    raise TranscriptError("Lütfen analiz edilecek TXT transcript dosyasını yükleyin.")
                 raise TranscriptError("Lütfen geçerli bir YouTube video linki girin.")
 
             cached_payload = get_cached_analysis(
                 video_url=video_url,
-                transcript_source="youtube",
+                transcript_source=transcript_input_mode,
                 output_language=target_language,
                 summary_ratio=summary_ratio,
             )
@@ -417,12 +445,18 @@ def main() -> None:
                 render_saved_analysis(cached_payload)
                 return
 
-            with st.spinner("Transcript alınıyor..."):
-                transcript_payload = fetch_transcript_payload(video_url, mode=transcript_mode)
-                transcript_text = transcript_payload["text"]
-                transcript_segments = transcript_payload["segments"]
-                transcript_source = transcript_payload["source"]
-                transcript_warning = transcript_payload["warning"]
+            if transcript_input_mode == "youtube":
+                with st.spinner("Transcript alınıyor..."):
+                    transcript_payload = fetch_transcript_payload(video_url, mode=transcript_mode)
+                    transcript_text = transcript_payload["text"]
+                    transcript_segments = transcript_payload["segments"]
+                    transcript_source = transcript_payload["source"]
+                    transcript_warning = transcript_payload["warning"]
+            else:
+                transcript_text = provided_transcript_text
+                transcript_segments = text_to_segments(transcript_text)
+                transcript_source = transcript_input_mode
+                transcript_warning = ""
 
             cleaned_text = clean_text(transcript_text)
             notices: list[str] = []
@@ -470,7 +504,13 @@ def main() -> None:
                 st.warning("Analiz kısmen tamamlandı. Bazı LLM tabanlı bölümler geçici olarak atlandı.")
             else:
                 st.success("Analiz başarıyla tamamlandı.")
-            source_label = "Whisper" if transcript_source == "whisper" else "YouTube Transcript API (fallback)"
+            source_labels = {
+                "whisper": "Whisper",
+                "youtube_transcript_api": "YouTube Transcript API",
+                "txt": "TXT Dosyası",
+                "example": "Hazır Örnek Transcript",
+            }
+            source_label = source_labels.get(str(transcript_source), "YouTube Transcript API")
             st.caption(f"Kullanılan transcript kaynağı: {source_label}")
             if transcript_warning:
                 st.warning(transcript_warning)
@@ -522,7 +562,7 @@ def main() -> None:
             }
             upsert_cached_analysis(
                 video_url=video_url,
-                transcript_source="youtube",
+                transcript_source=transcript_input_mode,
                 output_language=target_language,
                 summary_ratio=summary_ratio,
                 payload=payload,
@@ -549,6 +589,8 @@ def main() -> None:
 
         except TranscriptError as exc:
             st.error(str(exc))
+            if transcript_input_mode == "youtube":
+                st.info("YouTube erişimi engellenmiş olabilir. TXT Dosyası Yükle veya Hazır Örnek Kullan seçeneğini deneyin.")
         except Exception as exc:
             st.error(f"Beklenmeyen bir hata oluştu: {exc}")
 
