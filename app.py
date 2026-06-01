@@ -14,7 +14,7 @@ from utils.audience import (
     parse_audience_table,
 )
 from utils.keywords import extract_keywords
-from utils.preprocess import clean_text
+from utils.preprocess import clean_text, preview_text
 from utils.report import build_pdf_report
 from utils.sentiment import (
     SentimentAnalysisError,
@@ -33,7 +33,7 @@ from utils.storage import (
     save_analysis,
     upsert_cached_analysis,
 )
-from utils.summarizer import DEFAULT_SUMMARIZER_MODEL, summarize_text
+from utils.summarizer import DEFAULT_SUMMARIZER_MODEL, SummarizationError, summarize_text
 from utils.transcript import TranscriptError, fetch_transcript_payload
 from utils.translator import DEFAULT_LANGUAGE_CODE, LANGUAGE_OPTIONS, translate_text
 
@@ -111,27 +111,14 @@ def inject_styles() -> None:
     )
 
 
-def configure_runtime_secrets() -> None:
-    """Streamlit Secrets içindeki API anahtarını ortam değişkenine aktarır."""
-    try:
-        gemini_key = st.secrets.get("GEMINI_API_KEY", "")
-    except Exception:
-        gemini_key = ""
-
-    if gemini_key and not os.environ.get("GEMINI_API_KEY"):
-        os.environ["GEMINI_API_KEY"] = str(gemini_key)
-
-
 def render_sidebar() -> tuple[str, str, float, str]:
     """Kullanıcının hedef dil, özet yoğunluğu ve transcript kaynağını seçmesini sağlar."""
     st.sidebar.header("Ayarlar")
-
     language_label = st.sidebar.selectbox(
         "Çıktı Dili",
         options=list(LANGUAGE_OPTIONS.keys()),
         index=list(LANGUAGE_OPTIONS.values()).index(DEFAULT_LANGUAGE_CODE),
     )
-
     summary_mode = st.sidebar.selectbox(
         "Özet Uzunluğu",
         options=["Kısa", "Orta", "Detaylı"],
@@ -144,29 +131,15 @@ def render_sidebar() -> tuple[str, str, float, str]:
         "Detaylı": 0.38,
     }
 
-    transcript_label = st.sidebar.selectbox(
-        "Transcript Kaynağı",
-        options=[
-            "Otomatik (Whisper + YouTube API)",
-            "Hızlı (YouTube API)",
-            "Whisper",
-        ],
-        index=0,
-    )
-
-    transcript_mode_map = {
-        "Otomatik (Whisper + YouTube API)": "auto",
-        "Hızlı (YouTube API)": "youtube",
-        "Whisper": "whisper",
-    }
-
+    st.sidebar.markdown("**Transcript Kaynağı**")
+    st.sidebar.info("Hızlı (YouTube API)")
+    st.sidebar.caption("Bu sürümde transcript kaynağı sabit olarak YouTube API kullanır.")
     st.sidebar.caption(f"Kullanılan özetleme yaklaşımı: `{DEFAULT_SUMMARIZER_MODEL}`")
-
     return (
         language_label,
         LANGUAGE_OPTIONS[language_label],
         summary_ratio_map[summary_mode],
-        transcript_mode_map[transcript_label],
+        "youtube",
     )
 
 
@@ -213,13 +186,11 @@ def render_auth_page() -> None:
     st.markdown("## Kullanıcı Girişi")
     st.caption("Devam etmek için giriş yap.")
 
-    _left, center, _right = st.columns([1, 1.4, 1])
-
-    with center:
+    auth_col_left, auth_col_center, auth_col_right = st.columns([1, 1.4, 1])
+    with auth_col_center:
         st.markdown("### Giriş Yap")
         login_username = st.text_input("Kullanıcı Adı", key="page_login_username")
         login_password = st.text_input("Parola", type="password", key="page_login_password")
-
         if st.button("Giriş Yap", use_container_width=True, key="page_login_button"):
             user_payload = authenticate_user(login_username, login_password)
             if user_payload:
@@ -230,7 +201,6 @@ def render_auth_page() -> None:
 
         show_register = st.session_state.get("show_register_form", False)
         toggle_label = "Kayıt ol" if not show_register else "Kayıt ekranını kapat"
-
         if st.button(toggle_label, key="toggle_register_form"):
             st.session_state["show_register_form"] = not show_register
             st.rerun()
@@ -239,13 +209,11 @@ def render_auth_page() -> None:
             st.markdown("### Kayıt Ol")
             register_username = st.text_input("Yeni Kullanıcı Adı", key="page_register_username")
             register_password = st.text_input("Yeni Parola", type="password", key="page_register_password")
-
             if st.button("Kayıt Ol", use_container_width=True, key="page_register_button"):
                 success, message = create_user(register_username, register_password)
                 if success:
                     st.success(message)
                     st.session_state["show_register_form"] = False
-                    st.rerun()
                 else:
                     st.error(message)
 
@@ -264,21 +232,18 @@ def render_history_section() -> None:
 
     st.sidebar.divider()
     st.sidebar.subheader("Geçmiş Analizler")
-
     labels = {
         item["id"]: f"{item['created_at'][:16]} | {item['video_url'][:35]}"
         for item in history
     }
-
     selected_id = st.sidebar.selectbox(
         "Kayıtlı Analizler",
         options=list(labels.keys()),
         format_func=lambda analysis_id: labels[analysis_id],
     )
-
     st.session_state["selected_analysis_id"] = selected_id
-    selected_payload = get_analysis_by_id(int(selected_id))
 
+    selected_payload = get_analysis_by_id(int(selected_id))
     if selected_payload:
         with st.sidebar.expander("Geçmiş Analizi Görüntüle", expanded=False):
             st.caption(f"Tarih: {selected_payload.get('created_at', '-')}")
@@ -304,78 +269,6 @@ def render_download_buttons(payload: dict, button_key: str) -> None:
         use_container_width=True,
         key=button_key,
     )
-
-
-def render_result_card(title: str, content: str) -> None:
-    """Sonuçları kart görünümünde gösterir."""
-    safe_title = html.escape(title)
-    safe_content = html.escape(content)
-
-    st.markdown(
-        f"""
-        <div class="result-card">
-            <h3>{safe_title}</h3>
-            <p>{safe_content}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_summary_toggle(summary_text: str, translated_summary: str) -> None:
-    """Özet ve çevrilmiş özeti sekmelerde gösterir."""
-    summary_tab, translated_tab = st.tabs(["Oluşturulan Özet", "Çevrilmiş Özet"])
-
-    with summary_tab:
-        render_result_card("Oluşturulan Özet", summary_text)
-
-    with translated_tab:
-        render_result_card("Çevrilmiş Özet", translated_summary)
-
-
-def render_metric_chip(title: str, value: int, background: str) -> None:
-    """Kısa görsel metrik kartı gösterir."""
-    safe_title = html.escape(title)
-
-    st.markdown(
-        f"""
-        <div class="metric-chip" style="background:{background};">
-            <h4>{safe_title}</h4>
-            <p>%{value}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_sentiment_results(sentiment_rows: list[tuple[str, str]]) -> None:
-    """Duygu analizini tablo, skor kartları ve akış grafiğiyle gösterir."""
-    st.markdown("### Duygu Analiz Tablosu")
-    st.table(pd.DataFrame(sentiment_rows, columns=["Ölçüt", "Sonuç"]))
-
-    visual_data = build_sentiment_visual_data(sentiment_rows)
-    if not visual_data:
-        return
-
-    metric_cols = st.columns(len(visual_data))
-    metric_colors = [
-        "linear-gradient(135deg, #16a34a 0%, #22c55e 100%)",
-        "linear-gradient(135deg, #dc2626 0%, #ef4444 100%)",
-        "linear-gradient(135deg, #ea580c 0%, #f97316 100%)",
-        "linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)",
-        "linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)",
-    ]
-
-    for index, (label, score) in enumerate(visual_data.items()):
-        with metric_cols[index]:
-            render_metric_chip(label, score, metric_colors[index % len(metric_colors)])
-
-    st.markdown("### Duygu Akış Grafiği")
-    chart_df = pd.DataFrame(
-        [{"Ölçüt": label, "Skor": score} for label, score in visual_data.items()]
-    ).set_index("Ölçüt")
-
-    st.line_chart(chart_df, color="#38bdf8")
 
 
 def render_saved_analysis(payload: dict) -> None:
@@ -407,11 +300,76 @@ def render_saved_analysis(payload: dict) -> None:
 def render_input_section() -> str:
     """Video linki giriş alanını oluşturur."""
     st.markdown("## Video Analizi")
-
     return st.text_input(
         "YouTube Video Linki",
         placeholder="https://www.youtube.com/watch?v=...",
     ).strip()
+
+
+def render_result_card(title: str, content: str) -> None:
+    """Sonuçları kart görünümünde gösterir."""
+    safe_title = html.escape(title)
+    safe_content = html.escape(content)
+    st.markdown(
+        f"""
+        <div class="result-card">
+            <h3>{safe_title}</h3>
+            <p>{safe_content}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_summary_toggle(summary_text: str, translated_summary: str) -> None:
+    """Özet ve çevrilmiş özeti tek alanda seçimli olarak gösterir."""
+    summary_tab, translated_tab = st.tabs(["Oluşturulan Özet", "Çevrilmiş Özet"])
+    with summary_tab:
+        render_result_card("Oluşturulan Özet", summary_text)
+    with translated_tab:
+        render_result_card("Çevrilmiş Özet", translated_summary)
+
+
+def render_metric_chip(title: str, value: int, background: str) -> None:
+    """Kısa görsel metrik kartı gösterir."""
+    safe_title = html.escape(title)
+    st.markdown(
+        f"""
+        <div class="metric-chip" style="background:{background};">
+            <h4>{safe_title}</h4>
+            <p>%{value}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_sentiment_results(sentiment_rows: list[tuple[str, str]]) -> None:
+    """Duygu analizini tablo, skor kartları ve akış grafiğiyle gösterir."""
+    st.markdown("### Duygu Analiz Tablosu")
+    st.table(pd.DataFrame(sentiment_rows, columns=["Ölçüt", "Sonuç"]))
+
+    visual_data = build_sentiment_visual_data(sentiment_rows)
+    if not visual_data:
+        return
+
+    metric_cols = st.columns(len(visual_data))
+    metric_colors = [
+        "linear-gradient(135deg, #16a34a 0%, #22c55e 100%)",
+        "linear-gradient(135deg, #dc2626 0%, #ef4444 100%)",
+        "linear-gradient(135deg, #ea580c 0%, #f97316 100%)",
+        "linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)",
+        "linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)",
+    ]
+    for index, (label, score) in enumerate(visual_data.items()):
+        with metric_cols[index]:
+            render_metric_chip(label, score, metric_colors[index % len(metric_colors)])
+
+    st.markdown("### Duygu Akış Grafiği")
+    chart_df = pd.DataFrame(
+        [{"Ölçüt": label, "Skor": score} for label, score in visual_data.items()]
+    ).set_index("Ölçüt")
+    st.line_chart(chart_df, color="#38bdf8")
 
 
 def main() -> None:
@@ -421,8 +379,6 @@ def main() -> None:
         page_icon="🧠",
         layout="wide",
     )
-
-    configure_runtime_secrets()
     init_db()
     inject_styles()
 
@@ -430,15 +386,12 @@ def main() -> None:
 
     if "current_user" not in st.session_state:
         st.session_state["current_user"] = None
-
     if "selected_analysis_id" not in st.session_state:
         st.session_state["selected_analysis_id"] = None
-
     if "show_register_form" not in st.session_state:
         st.session_state["show_register_form"] = False
 
     current_user = st.session_state.get("current_user")
-
     if not current_user:
         render_auth_page()
         return
@@ -446,7 +399,6 @@ def main() -> None:
     _language_label, target_language, summary_ratio, transcript_mode = render_sidebar()
     render_auth_section()
     render_history_section()
-
     video_url = render_input_section()
 
     if st.button("Analizi Başlat", use_container_width=True):
@@ -456,23 +408,17 @@ def main() -> None:
 
             cached_payload = get_cached_analysis(
                 video_url=video_url,
-                transcript_source=transcript_mode,
+                transcript_source="youtube",
                 output_language=target_language,
                 summary_ratio=summary_ratio,
             )
-
             if cached_payload:
                 st.success("Önceden üretilmiş analiz önbellekten yüklendi.")
                 render_saved_analysis(cached_payload)
                 return
 
             with st.spinner("Transcript alınıyor..."):
-                transcript_payload = fetch_transcript_payload(
-                    video_url,
-                    languages=["tr", "en"],
-                    mode=transcript_mode,
-                )
-
+                transcript_payload = fetch_transcript_payload(video_url, mode=transcript_mode)
                 transcript_text = transcript_payload["text"]
                 transcript_segments = transcript_payload["segments"]
                 transcript_source = transcript_payload["source"]
@@ -498,68 +444,38 @@ def main() -> None:
                 )
 
             with st.spinner("Özet çevriliyor..."):
-                translated_summary, translation_note = translate_text(
-                    summary_text,
-                    target_language,
-                )
+                translated_summary, translation_note = translate_text(summary_text, target_language)
 
             with st.spinner("Argo analizi yapılıyor..."):
                 slang_analysis = analyze_slang(cleaned_text, summary_text=summary_text)
-                translated_slang_analysis, _ = translate_text(
-                    slang_analysis,
-                    target_language,
-                )
+                translated_slang_analysis, _ = translate_text(slang_analysis, target_language)
 
             translated_sentiment_analysis = "Duygu ve ton analizi şu anda üretilemedi."
             translated_audience_analysis = "Hedef kitle analizi şu anda üretilemedi."
-
             try:
                 with st.spinner("Duygu ve ton analizi yapılıyor..."):
-                    sentiment_analysis = analyze_sentiment_and_tone(
-                        cleaned_text,
-                        summary_text=summary_text,
-                    )
-                    translated_sentiment_analysis, _ = translate_text(
-                        sentiment_analysis,
-                        target_language,
-                    )
+                    sentiment_analysis = analyze_sentiment_and_tone(cleaned_text, summary_text=summary_text)
+                    translated_sentiment_analysis, _ = translate_text(sentiment_analysis, target_language)
             except SentimentAnalysisError as sentiment_exc:
                 notices.append(f"Duygu/ton analizi atlandı: {sentiment_exc}")
 
             try:
                 with st.spinner("Hedef kitle analizi yapılıyor..."):
-                    audience_analysis = analyze_target_audience(
-                        cleaned_text,
-                        summary_text=summary_text,
-                    )
-                    translated_audience_analysis, _ = translate_text(
-                        audience_analysis,
-                        target_language,
-                    )
+                    audience_analysis = analyze_target_audience(cleaned_text, summary_text=summary_text)
+                    translated_audience_analysis, _ = translate_text(audience_analysis, target_language)
             except AudienceAnalysisError as audience_exc:
                 notices.append(f"Hedef kitle analizi atlandı: {audience_exc}")
 
             if any("atlandı" in note.lower() for note in notices):
-                st.warning(
-                    "Analiz kısmen tamamlandı. Bazı LLM tabanlı bölümler geçici olarak atlandı."
-                )
+                st.warning("Analiz kısmen tamamlandı. Bazı LLM tabanlı bölümler geçici olarak atlandı.")
             else:
                 st.success("Analiz başarıyla tamamlandı.")
-
-            source_label = (
-                "Whisper"
-                if transcript_source == "whisper"
-                else "YouTube Transcript API (fallback)"
-            )
-
+            source_label = "Whisper" if transcript_source == "whisper" else "YouTube Transcript API (fallback)"
             st.caption(f"Kullanılan transcript kaynağı: {source_label}")
-
             if transcript_warning:
                 st.warning(transcript_warning)
-
             if "GEMINI_API_KEY" not in os.environ:
                 st.info("Not: Gemini özetleme ve analizler için GEMINI_API_KEY ortam değişkeni gerekir.")
-
             for notice in notices:
                 st.info(notice)
 
@@ -569,7 +485,6 @@ def main() -> None:
             )
 
             analysis_left, analysis_right = st.columns(2)
-
             with analysis_left:
                 st.markdown("### Argo Analizi")
                 slang_rows = parse_slang_table(translated_slang_analysis)
@@ -577,14 +492,12 @@ def main() -> None:
                     st.table(pd.DataFrame(slang_rows, columns=["Ölçüt", "Sonuç"]))
                 else:
                     render_result_card("Argo Analizi", translated_slang_analysis)
-
             with analysis_right:
                 sentiment_rows = parse_sentiment_table(translated_sentiment_analysis)
                 if not sentiment_rows:
                     render_result_card("Duygu ve Ton Analizi", translated_sentiment_analysis)
 
             audience_rows = parse_audience_table(translated_audience_analysis)
-
             if audience_rows:
                 st.markdown("### Hedef Kitle Tahmini")
                 st.table(pd.DataFrame(audience_rows, columns=["Ölçüt", "Sonuç"]))
@@ -596,7 +509,6 @@ def main() -> None:
 
             keyword_content = " | ".join(keywords) if keywords else "Anahtar kelime çıkarılamadı."
             render_result_card("Anahtar Kelimeler", keyword_content)
-
             payload = {
                 "video_url": video_url,
                 "transcript_source": source_label,
@@ -608,19 +520,16 @@ def main() -> None:
                 "keywords": keywords,
                 "output_language": target_language,
             }
-
             upsert_cached_analysis(
                 video_url=video_url,
-                transcript_source=transcript_mode,
+                transcript_source="youtube",
                 output_language=target_language,
                 summary_ratio=summary_ratio,
                 payload=payload,
             )
-
             render_download_buttons(payload, button_key=f"live_pdf_{video_url}_{target_language}")
 
             current_user = st.session_state.get("current_user")
-
             if current_user:
                 analysis_id = save_analysis(
                     user_id=int(current_user["id"]),
@@ -630,7 +539,6 @@ def main() -> None:
                     summary_ratio=summary_ratio,
                     payload=payload,
                 )
-
                 st.session_state["selected_analysis_id"] = analysis_id
                 st.success("Analiz geçmişe kaydedildi.")
             else:
@@ -641,7 +549,6 @@ def main() -> None:
 
         except TranscriptError as exc:
             st.error(str(exc))
-
         except Exception as exc:
             st.error(f"Beklenmeyen bir hata oluştu: {exc}")
 
