@@ -1,4 +1,4 @@
-"""Transcript alma işlemleri: önce Whisper, gerekirse YouTube transcript fallback."""
+"""YouTube transcript alma ve isteğe bağlı Whisper fallback işlemleri."""
 
 from __future__ import annotations
 
@@ -10,7 +10,15 @@ from urllib.parse import parse_qs, urlparse
 
 from faster_whisper import WhisperModel
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import CouldNotRetrieveTranscript, NoTranscriptFound
+from youtube_transcript_api._errors import (
+    AgeRestricted,
+    CouldNotRetrieveTranscript,
+    IpBlocked,
+    NoTranscriptFound,
+    RequestBlocked,
+    TranscriptsDisabled,
+    VideoUnavailable,
+)
 from yt_dlp import YoutubeDL
 
 
@@ -26,11 +34,11 @@ def extract_video_id(video_url: str) -> str:
     parsed_url = urlparse(video_url.strip())
 
     if parsed_url.netloc in {"youtu.be", "www.youtu.be"}:
-        video_id = parsed_url.path.lstrip("/")
+        video_id = parsed_url.path.lstrip("/").split("/")[0]
     elif "youtube.com" in parsed_url.netloc:
         if parsed_url.path == "/watch":
             video_id = parse_qs(parsed_url.query).get("v", [""])[0]
-        elif parsed_url.path.startswith("/shorts/") or parsed_url.path.startswith("/embed/"):
+        elif parsed_url.path.startswith(("/shorts/", "/embed/")):
             parts = [part for part in parsed_url.path.split("/") if part]
             video_id = parts[1] if len(parts) > 1 else ""
         else:
@@ -39,7 +47,8 @@ def extract_video_id(video_url: str) -> str:
         match = re.search(r"([A-Za-z0-9_-]{11})", video_url)
         video_id = match.group(1) if match else ""
 
-    if not video_id:
+    video_id = video_id.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
         raise TranscriptError("Geçersiz YouTube linki: video kimliği bulunamadı.")
 
     return video_id
@@ -66,7 +75,10 @@ def download_audio(video_url: str, output_dir: str) -> Path:
     return Path(downloaded_path)
 
 
-def transcribe_with_whisper(video_url: str, model_size: str = "small") -> Dict[str, List[Dict] | str]:
+def transcribe_with_whisper(
+    video_url: str,
+    model_size: str = "small",
+) -> Dict[str, List[Dict] | str]:
     """Whisper ile transcript üretir."""
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -89,9 +101,14 @@ def transcribe_with_whisper(video_url: str, model_size: str = "small") -> Dict[s
     except TranscriptError:
         raise
     except Exception as exc:
-        raise TranscriptError(f"Whisper transkripsiyonu başarısız oldu: {exc}") from exc
+        raise TranscriptError(
+            f"Whisper transkripsiyonu başarısız oldu: {exc}"
+        ) from exc
 
-    transcript_text = " ".join(item["text"] for item in transcript_segments).strip()
+    transcript_text = " ".join(
+        item["text"] for item in transcript_segments
+    ).strip()
+
     if not transcript_text:
         raise TranscriptError("Whisper transcript boş geldi.")
 
@@ -102,39 +119,90 @@ def transcribe_with_whisper(video_url: str, model_size: str = "small") -> Dict[s
     }
 
 
-def transcribe_with_youtube_api(video_url: str, languages: list[str] | None = None) -> Dict[str, List[Dict] | str]:
-    """youtube-transcript-api ile fallback transcript üretir."""
+def transcribe_with_youtube_api(
+    video_url: str,
+    languages: list[str] | None = None,
+) -> Dict[str, List[Dict] | str]:
+    """youtube-transcript-api ile transcript üretir."""
     video_id = extract_video_id(video_url)
     languages = languages or ["tr", "en"]
 
     try:
+        # Yeni ve eski youtube-transcript-api sürümlerini destekler.
         if hasattr(YouTubeTranscriptApi, "get_transcript"):
-            transcript_items = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+            transcript_items = YouTubeTranscriptApi.get_transcript(
+                video_id,
+                languages=languages,
+            )
         else:
-            transcript_items = YouTubeTranscriptApi().fetch(video_id, languages=languages)
+            transcript_items = YouTubeTranscriptApi().fetch(
+                video_id,
+                languages=languages,
+            )
+    except IpBlocked as exc:
+        raise TranscriptError(
+            "YouTube, sunucunun IP adresini engelledi. "
+            "Streamlit Cloud IP adresi sınırlandırılmış olabilir."
+        ) from exc
+    except RequestBlocked as exc:
+        raise TranscriptError(
+            "YouTube transcript isteğini engelledi. "
+            "Sunucu IP adresi geçici olarak sınırlandırılmış olabilir."
+        ) from exc
     except NoTranscriptFound as exc:
-        raise TranscriptError("Bu video için transcript bulunamadı.") from exc
+        raise TranscriptError(
+            "Bu video için Türkçe veya İngilizce transcript bulunamadı."
+        ) from exc
+    except TranscriptsDisabled as exc:
+        raise TranscriptError(
+            "Bu videoda transcript özelliği kapalı."
+        ) from exc
+    except AgeRestricted as exc:
+        raise TranscriptError(
+            "Yaş kısıtlamalı videoların transcript verisi alınamıyor."
+        ) from exc
+    except VideoUnavailable as exc:
+        raise TranscriptError(
+            "Video erişilebilir değil. Video gizli, kaldırılmış veya "
+            "bölgesel olarak kısıtlı olabilir."
+        ) from exc
     except CouldNotRetrieveTranscript as exc:
-        raise TranscriptError("Transcript alınamadı. Video erişimi veya transcript ayarlarını kontrol edin.") from exc
+        raise TranscriptError(
+            f"Transcript alınamadı. YouTube hata türü: {type(exc).__name__}."
+        ) from exc
     except Exception as exc:
-        raise TranscriptError(f"Transcript alınırken hata oluştu: {exc}") from exc
+        raise TranscriptError(
+            f"Transcript alınırken beklenmeyen hata oluştu: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
 
     transcript_segments: List[Dict] = []
+
     for item in transcript_items:
         if isinstance(item, dict):
-            text = item.get("text", "").strip()
+            text = str(item.get("text", "")).strip()
             start = float(item.get("start", 0.0))
             duration = float(item.get("duration", 0.0))
-            end = start + duration
         else:
-            text = getattr(item, "text", "").strip()
-            start = 0.0
-            end = 0.0
+            text = str(getattr(item, "text", "")).strip()
+            start = float(getattr(item, "start", 0.0))
+            duration = float(getattr(item, "duration", 0.0))
+
         if not text:
             continue
-        transcript_segments.append({"start": start, "end": end, "text": text})
 
-    transcript_text = " ".join(item["text"] for item in transcript_segments).strip()
+        transcript_segments.append(
+            {
+                "start": start,
+                "end": start + duration,
+                "text": text,
+            }
+        )
+
+    transcript_text = " ".join(
+        item["text"] for item in transcript_segments
+    ).strip()
+
     if not transcript_text:
         raise TranscriptError("Transcript boş geldi.")
 
@@ -161,7 +229,6 @@ def fetch_transcript_payload(
         payload["warning"] = ""
         return payload
 
-    # auto mode: önce Whisper, sonra fallback
     whisper_error = ""
     try:
         payload = transcribe_with_whisper(video_url)
@@ -171,10 +238,22 @@ def fetch_transcript_payload(
         whisper_error = str(exc)
 
     payload = transcribe_with_youtube_api(video_url, languages=languages)
-    payload["warning"] = f"Whisper kullanılamadı, YouTube transcript fallback kullanıldı: {whisper_error}"
+    payload["warning"] = (
+        "Whisper kullanılamadı, YouTube transcript fallback kullanıldı: "
+        f"{whisper_error}"
+    )
     return payload
 
 
-def fetch_transcript_text(video_url: str, languages: list[str] | None = None, mode: str = "auto") -> str:
+def fetch_transcript_text(
+    video_url: str,
+    languages: list[str] | None = None,
+    mode: str = "auto",
+) -> str:
     """Yalnızca transcript metnini döndürür."""
-    return str(fetch_transcript_payload(video_url, languages=languages, mode=mode)["text"])
+    payload = fetch_transcript_payload(
+        video_url,
+        languages=languages,
+        mode=mode,
+    )
+    return str(payload["text"])
