@@ -131,15 +131,30 @@ def render_sidebar() -> tuple[str, str, float, str]:
         "Detaylı": 0.38,
     }
 
-    st.sidebar.markdown("**Transcript Kaynağı**")
-    st.sidebar.info("Hızlı (YouTube API)")
-    st.sidebar.caption("Bu sürümde transcript kaynağı sabit olarak YouTube API kullanır.")
+        transcript_label = st.sidebar.selectbox(
+        "Transcript Kaynağı",
+        options=[
+            "Otomatik (Whisper + YouTube API)",
+            "Hızlı (YouTube API)",
+            "Whisper",
+        ],
+        index=0,
+    )
+
+    transcript_mode_map = {
+        "Otomatik (Whisper + YouTube API)": "auto",
+        "Hızlı (YouTube API)": "youtube",
+        "Whisper": "whisper",
+    }
+
     st.sidebar.caption(f"Kullanılan özetleme yaklaşımı: `{DEFAULT_SUMMARIZER_MODEL}`")
+
     return (
         language_label,
         LANGUAGE_OPTIONS[language_label],
         summary_ratio_map[summary_mode],
-        "youtube",
+        transcript_mode_map[transcript_label],
+    )
     )
 
 
@@ -406,11 +421,12 @@ def main() -> None:
             if not video_url:
                 raise TranscriptError("Lütfen geçerli bir YouTube video linki girin.")
 
-            cached_payload = get_cached_analysis(
-                video_url=video_url,
-                transcript_source="youtube",
-                output_language=target_language,
-                summary_ratio=summary_ratio,
+           cached_payload = get_cached_analysis(
+    video_url=video_url,
+    transcript_source=transcript_mode,
+    output_language=target_language,
+    summary_ratio=summary_ratio,
+)
             )
             if cached_payload:
                 st.success("Önceden üretilmiş analiz önbellekten yüklendi.")
@@ -418,7 +434,11 @@ def main() -> None:
                 return
 
             with st.spinner("Transcript alınıyor..."):
-                transcript_payload = fetch_transcript_payload(video_url, mode=transcript_mode)
+                transcript_payload = fetch_transcript_payload(
+    video_url,
+    languages=["tr", "en"],
+    mode=transcript_mode,
+)
                 transcript_text = transcript_payload["text"]
                 transcript_segments = transcript_payload["segments"]
                 transcript_source = transcript_payload["source"]
