@@ -9,9 +9,7 @@ yapilandirilmis bir ozet olusturur. Ayrica anahtar kelime, argo, duygu, ton ve
 hedef kitle analizleri sunar.
 
 Uygulama konusma dilinden gelen daginik transcript verileriyle calisabilecek
-sekilde tasarlanmistir. YouTube transcript erisiminin bulut ortamlarinda
-engellenebildigi durumlar icin TXT dosyasi yukleme ve hazir ornek transcript
-kullanma secenekleri de eklenmistir.
+sekilde tasarlanmistir.
 
 ## Baglantilar
 
@@ -28,7 +26,6 @@ uzerinde deploy ettikten sonra guncelleyin:
 ## Temel Ozellikler
 
 - YouTube videosundan otomatik transcript alma
-- TXT dosyasi yukleyerek transcript analizi yapma
 - Dosya hazirlamadan sistemi deneyebilmek icin hazir ornek transcript
 - Regex tabanli metin temizleme ve segment normalizasyonu
 - Gemini API ile blok bazli ara ozet ve final yapilandirilmis ozet
@@ -47,7 +44,6 @@ uzerinde deploy ettikten sonra guncelleyin:
 2. Cikti dilini ve ozet uzunlugunu secer.
 3. Transcript kaynagini belirler:
    - `YouTube'dan Otomatik Al`
-   - `TXT Dosyasi Yukle`
    - `Hazir Ornek Kullan`
 4. `Analizi Baslat` dugmesine basar.
 5. Sistem metni temizler, konu bloklari olusturur ve analizleri calistirir.
@@ -62,11 +58,6 @@ uzerinde deploy ettikten sonra guncelleyin:
 Kullanici bir YouTube video baglantisi girer. Uygulama
 `youtube-transcript-api` ile videonun transcript metnini almaya calisir.
 
-### TXT Dosyasi Yukle
-
-Kullanici UTF-8 kodlamali bir `.txt` dosyasi yukleyebilir. Dosyada zaman damgasi
-veya ozel bir format bulunmasi gerekmez. Duz metin yeterlidir.
-
 Ornek:
 
 ```text
@@ -74,12 +65,6 @@ Bugun dogal dil isleme yontemlerini inceleyecegiz.
 Transcript verileri analizden once temizlenmelidir.
 Buyuk dil modelleri daginik metinleri ozetlemek icin kullanilabilir.
 ```
-
-### Hazir Ornek Kullan
-
-Kullanici ek bir dosya yuklemeden repoda yer alan
-`examples/ornek_transcript.txt` dosyasiyla sistemi deneyebilir. Bu secenek,
-canli demo sirasinda dis servis kaynakli erisim sorunlarina karsi yedek akistir.
 
 ## Kullanilan Teknolojiler
 
@@ -167,17 +152,8 @@ YouTube, bazi bulut sunucularinin IP adreslerinden gelen transcript isteklerini
 sinirlandirabilir. Bu nedenle yerel ortamda calisan otomatik transcript islemi
 Streamlit Community Cloud uzerinde bazi videolarda basarisiz olabilir.
 
-Uygulama bu duruma karsi iki alternatif sunar:
-
-1. Kullanici transcript metnini `.txt` dosyasi olarak yukleyebilir.
-2. Kullanici `Hazir Ornek Kullan` secenegiyle sistemi hemen deneyebilir.
-
 Bu yedek akislarda ozetleme, ceviri, anahtar kelime, argo, duygu ve hedef kitle
 analizleri ayni sekilde calismaya devam eder.
-
-
-
-
 
 ## Gelistirme Notlari
 
