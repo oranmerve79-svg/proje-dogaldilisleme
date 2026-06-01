@@ -369,7 +369,7 @@ def render_sentiment_results(sentiment_rows: list[tuple[str, str]]) -> None:
     chart_df = pd.DataFrame(
         [{"Ölçüt": label, "Skor": score} for label, score in visual_data.items()]
     ).set_index("Ölçüt")
-    st.area_chart(chart_df, color="#38bdf8")
+    st.line_chart(chart_df, color="#38bdf8")
 
 
 def main() -> None:
